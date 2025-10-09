@@ -77,14 +77,14 @@ struct BusLive: Identifiable, Hashable {
     var etaMinutes: Int?
     var nextStopName: String?
 }
-//struct ArrivalInfo: Identifiable, Hashable { let id = UUID(); let routeId: String; let routeNo: String; let etaMinutes: Int }
-struct ArrivalInfo: Identifiable, Hashable {
-    let id = UUID()
-    let routeId: String
-    let routeNo: String
-    let etaMinutes: Int
-    var destination: String? = nil   // 패널에서 쓸 수 있게(옵션)
-}
+////struct ArrivalInfo: Identifiable, Hashable { let id = UUID(); let routeId: String; let routeNo: String; let etaMinutes: Int }
+//struct ArrivalInfo: Identifiable, Hashable {
+//    let id = UUID()
+//    let routeId: String
+//    let routeNo: String
+//    let etaMinutes: Int
+//    var destination: String? = nil   // 패널에서 쓸 수 있게(옵션)
+//}
 
 enum APIError: Error { case invalidURL, http(Int), decode(Error) }
 
@@ -130,8 +130,159 @@ actor APICounter {
     }
 }
 
+
+private struct ATV2TripUpdate: Decodable {
+    // 필요한 최소 필드만 추려서 선언 (실제 응답은 훨씬 큼)
+    // 예: { "trip_update": { "trip": {...}, "stop_time_update":[{"arrival":{"delay":..,"time":..},"stop_id":"...."}] } }
+    struct TripUpdate: Decodable {
+        struct StopTimeUpdate: Decodable {
+            struct Arr: Decodable { let delay: Int?; let time: Int? }
+            let arrival: Arr?
+            let departure: Arr?
+            let stop_id: String?
+            let stop_sequence: Int?
+        }
+        struct Trip: Decodable { let route_id: String?; let trip_id: String?; let route_short_name: String? }
+        let trip: Trip?
+        let stop_time_update: [StopTimeUpdate]?
+    }
+    let trip_update: TripUpdate?
+
+    func toArrivalInfos(forStopId stopId: String) -> [ArrivalInfo] {
+        guard let tu = trip_update else { return [] }
+        let routeId = tu.trip?.route_id ?? "?"
+        let routeNo = tu.trip?.route_short_name ?? (tu.trip?.trip_id ?? "?")
+
+        // stop_id가 일치하는 항목만
+        let stus = (tu.stop_time_update ?? []).filter { $0.stop_id == stopId }
+        return stus.compactMap { stu in
+            let sec = stu.arrival?.time ?? stu.departure?.time
+            let now = Int(Date().timeIntervalSince1970)
+            let etaMin: Int = {
+                guard let t = sec else { return 0 }
+                let d = max(0, t - now)
+                return Int((Double(d)/60.0).rounded(.toNearestOrEven))
+            }()
+            return .init(routeId: routeId, routeNo: routeNo, etaMinutes: etaMin)
+        }
+    }
+}
+
+private struct ATV3ETAAttrs: Decodable {
+    // 예시: { "route_id":"...", "route_short_name":"...", "arrival_time":"2025-10-09T01:23:45Z", "stop_id":"..." }
+    let route_id: String?
+    let route_short_name: String?
+    let arrival_time: String?
+    let headsign: String?
+
+    func toArrivalInfo() -> ArrivalInfo? {
+        guard let rid = route_id, let rno = route_short_name else { return nil }
+        var etaMin = 0
+        if let iso = arrival_time, let t = ISO8601DateFormatter().date(from: iso) {
+            let d = max(0, t.timeIntervalSinceNow)
+            etaMin = Int((d/60.0).rounded(.toNearestOrEven))
+        }
+        return .init(routeId: rid, routeNo: rno, etaMinutes: etaMin)
+    }
+}
+// 파일 상단 공용 영역에 선언
+struct ArrivalInfo: Identifiable, Decodable {
+    var id: String { routeId + ":" + routeNo + ":" + String(etaMinutes) }
+    let routeId: String
+    let routeNo: String
+    let etaMinutes: Int
+    let destination: String? = nil
+}
+
 // MARK: - API
 final class BusAPI: NSObject, URLSessionDelegate {
+    // BusAPI.swift 내부 (기존 send(_:url:) 옆에 추가)
+    @discardableResult
+    func send(_ tag: String, request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let http = resp as? HTTPURLResponse ?? HTTPURLResponse()
+        #if DEBUG
+        if let u = request.url?.absoluteString {
+            print("🌐 [\(tag)] \(request.httpMethod ?? "GET") \(u) → \(http.statusCode)  body=\(data.count)B")
+        }
+        #endif
+        return (data, http)
+    }
+
+    // BusAPI.swift 내부
+    struct ATStopTripAttrs: Decodable {
+        let route_id: String?
+        let trip_headsign: String?
+        let departure_time: String?   // "HH:mm:ss"
+    }
+
+    // 이미 프로젝트에 있는 JSONAPIList / JSONAPIResource 사용
+    // func fetchATArrivals(forStopId:) 새로 추가
+    func fetchATArrivals(forStopId stopId: String) async throws -> [ArrivalInfo] {
+        // 오클랜드 타임존 기준
+        let tz = TimeZone(identifier: "Pacific/Auckland") ?? .current
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = tz
+
+        let now = Date()
+        // AT v3는 날짜를 yyyy-MM-dd 혹은 locale short로 받는다 → 안전하게 yyyy-MM-dd로 고정
+        let dfDate = DateFormatter(); dfDate.calendar = cal; dfDate.timeZone = tz; dfDate.dateFormat = "yyyy-MM-dd"
+        let dateStr = dfDate.string(from: now)
+        let hour = cal.component(.hour, from: now)
+
+        // /gtfs/v3/stops/{id}/stoptrips?filter[date]=YYYY-MM-DD&filter[start_hour]=H&filter[hour_range]=3
+        var comp = URLComponents(string: "https://api.at.govt.nz/gtfs/v3/stops/\(stopId)/stoptrips")!
+        comp.queryItems = [
+            .init(name: "filter[date]", value: dateStr),
+            .init(name: "filter[start_hour]", value: String(hour)),
+            .init(name: "filter[hour_range]", value: "3")
+        ]
+        var req = URLRequest(url: comp.url!)
+        req.httpMethod = "GET"
+        req.setValue(ATAuth.subscriptionKey, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
+
+        let (data, http) = try await send("AT-stoptrips", request: req)
+        guard http.statusCode == 200 else {
+            print("❌ [AT] stoptrips http=\(http.statusCode)")
+            return []
+        }
+
+        // 파싱
+        let parsed = try JSONDecoder().decode(JSONAPIList<ATStopTripAttrs>.self, from: data)
+        let arr = parsed.data.map { $0.attributes }
+
+        // "HH:mm:ss" 파서
+        let dfTime = DateFormatter()
+        dfTime.calendar = cal; dfTime.timeZone = tz; dfTime.dateFormat = "HH:mm:ss"
+
+        var out: [ArrivalInfo] = []
+        for a in arr {
+            guard let rid = a.route_id,
+                  let tStr = a.departure_time,
+                  let t = dfTime.date(from: tStr) else { continue }
+
+            // 오늘 날짜의 HH:mm:ss → 절대시각
+            var comps = cal.dateComponents([.year,.month,.day], from: now)
+            let hhmmss = tStr.split(separator: ":").compactMap { Int($0) }
+            if hhmmss.count == 3 {
+                comps.hour = hhmmss[0]; comps.minute = hhmmss[1]; comps.second = hhmmss[2]
+            }
+            let when = cal.date(from: comps) ?? now
+            let etaMin = Int((when.timeIntervalSince(now) / 60.0).rounded())
+
+            if etaMin >= 0 {
+                out.append(ArrivalInfo(
+                    routeId: rid,
+                    routeNo: rid,                 // 오클랜드는 보통 route_id를 라벨로 써도 충분
+                    etaMinutes: etaMin // ArrivalInfo가 옵셔널이 아니면 ?? "" 로 바꿔줘
+                ))
+            }
+        }
+
+        print("🇳🇿 [FocusETA] AT loaded: stopId=\(stopId) count=\(out.count) sample=\(out.prefix(4).map{ "\($0.routeNo) \($0.etaMinutes)m" })")
+        return out.sorted { $0.etaMinutes < $1.etaMinutes }
+    }
+
+    
     // BusAPI.swift 어딘가 공용 위치
     private let CITY_AUCKLAND = -100   // 앱 라우터에서 이 값을 오클랜드로 인식하도록 사용
 
@@ -340,12 +491,13 @@ final class BusAPI: NSObject, URLSessionDelegate {
         guard (200..<300).contains(http.statusCode), !data.isEmpty else { return [] }
         let parsed = try JSONDecoder().decode(ATPredictionList.self, from: data)
         // JSON:API → 앱 모델 변환
-        let infos: [ArrivalInfo] = parsed.data.compactMap { res in
+        let infos: [ArrivalInfo] = parsed.data.compactMap { res -> ArrivalInfo? in
             let a = res.attributes
             guard let rno = a.route_short_name else { return nil }
             let etaMin = Int((a.departure_seconds ?? 0)/60.0 + 0.5)
-            return ArrivalInfo(routeId: rno, routeNo: rno, etaMinutes: max(0, etaMin), destination: a.trip_headsign)
+            return ArrivalInfo(routeId: rno, routeNo: rno, etaMinutes: max(0, etaMin))
         }
+
         return infos
     }
 
@@ -867,7 +1019,7 @@ final class BusAPI: NSObject, URLSessionDelegate {
                 }()
                 let etaMin = max(0, etaSec / 60)
                 let routeNo = rid.split(separator: "-").first.map(String.init) ?? rid
-                out.append(ArrivalInfo(routeId: rid, routeNo: routeNo, etaMinutes: etaMin, destination: nil))
+                out.append(ArrivalInfo(routeId: rid, routeNo: routeNo, etaMinutes: etaMin))
             }
         }
 
@@ -1476,22 +1628,37 @@ final class MapVM: ObservableObject {
             return stops.first(where: { $0.id == id })
         }
 
-        func refreshFocusStopETA() async {
-            guard let s = focusStop else { return }
-            await MainActor.run { focusStopLoading = true }
-            // TODO: 실제 API/계산으로 교체
-            // 여기선 샘플로 routeNo들을 2~4개 랜덤 생성
-            let demos = [
-                ArrivalInfo(routeId: "1001", routeNo: "101", etaMinutes: Int.random(in: 1...7)),
-                ArrivalInfo(routeId: "1002", routeNo: "706", etaMinutes: Int.random(in: 3...15)),
-                ArrivalInfo(routeId: "1003", routeNo: "612", etaMinutes: Int.random(in: 2...20)),
-            ]
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            await MainActor.run {
-                self.focusStopETAs = demos.sorted { $0.etaMinutes < $1.etaMinutes }
-                self.focusStopLoading = false
+    // MapVM 안 (기존 메서드 교체)
+    @MainActor
+    // MapVM.swift
+    func refreshFocusStopETA() async {
+        guard let s = focusStop else { return }
+        focusStopLoading = true
+        defer { focusStopLoading = false }
+
+        switch provider {
+        case .motie, .daejeon:
+            do {
+                let arr = try await api.fetchArrivalsDetailed(cityCode: CITY_CODE, nodeId: s.id)
+                print("🇰🇷 [FocusETA] MOTIE loaded: stopId=\(s.id) name=\(s.name) count=\(arr.count)")
+                self.focusStopETAs = arr
+            } catch {
+                print("❌ [FocusETA] MOTIE error: \(error)")
+                self.focusStopETAs = []
+            }
+
+        case .auckland:
+            do {
+                let arr = try await api.fetchATArrivals(forStopId: s.id)
+                print("🇳🇿 [FocusETA] AT set: stopId=\(s.id) name=\(s.name) count=\(arr.count)")
+                self.focusStopETAs = arr
+            } catch {
+                print("❌ [FocusETA] AT error: \(error)")
+                self.focusStopETAs = []
             }
         }
+    }
+
 
         // 알림 본문 요약
         func focusETACompactSummary() -> String {
