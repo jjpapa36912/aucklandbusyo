@@ -132,6 +132,146 @@ actor APICounter {
 
 // MARK: - API
 final class BusAPI: NSObject, URLSessionDelegate {
+    // BusAPI.swift 어딘가 공용 위치
+    private let CITY_AUCKLAND = -100   // 앱 라우터에서 이 값을 오클랜드로 인식하도록 사용
+
+    // "7058-d68c50d8" → "7058", "07058" → "7058"
+    private func atStopHeadDigits(_ raw: String) -> String {
+        let head = raw.split(separator: "-").first.map(String.init) ?? raw
+        // 숫자만 추출 + 선행 0 제거
+        let digits = head.filter(\.isNumber)
+        return digits.drop { $0 == "0" }.isEmpty ? digits : String(digits.drop { $0 == "0" })
+    }
+
+    // AT stop_id ↔ nodeId 매칭: 대시 전 "숫자 헤드"로만 비교
+    private func atStopMatchesNode(_ atStopId: String?, nodeId: String) -> Bool {
+        guard let sid = atStopId, !sid.isEmpty else { return false }
+        let a = atStopHeadDigits(sid)
+        let b = atStopHeadDigits(nodeId)
+        return !a.isEmpty && a == b
+    }
+
+    
+    
+    
+    // 레거시 래퍼: { "response": { "entity": [...] } } 또는 { "entity": [...] }
+    struct Envelope<E: Decodable>: Decodable {
+        let entity: [E]
+
+        private struct Resp: Decodable { let entity: [E]? }
+
+        enum CodingKeys: String, CodingKey { case response, entity }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            if let r = try? c.decode(Resp.self, forKey: .response) {
+                entity = r.entity ?? []
+            } else if let arr = try? c.decode([E].self, forKey: .entity) {
+                entity = arr
+            } else {
+                entity = []
+            }
+        }
+    }
+
+    private struct ATVehicleEntity: Decodable {
+        struct VP: Decodable {
+            struct Trip: Decodable { let route_id: String? }
+            struct Pos: Decodable { let latitude: Double; let longitude: Double }
+            struct Veh: Decodable { let id: String? }
+            let trip: Trip?
+            let position: Pos?
+            let vehicle: Veh?
+        }
+        let vehicle: VP?
+    }
+    private func atStopIdCandidates(for nodeId: String) -> [String] {
+        let base = nodeId.split(separator: "-").first.map(String.init) ?? nodeId
+        // 4자리 숫자만 뽑아내기
+        let digits = base.filter(\.isNumber)
+        var cands = Set<String>()
+        if !digits.isEmpty { cands.insert(digits) }
+        cands.insert(nodeId)
+        // AT에서 자주 보이는 suffix들
+        ["-1","-2","-201","-202","-203"].forEach { cands.insert("\(digits)\($0)") }
+        debugPrint("🔎 AT stop match candidates for nodeId=\(nodeId) → \(Array(cands))")
+        return Array(cands)
+    }
+
+    // 객체/배열 겸용 디코더
+    // 객체 or 배열 둘 다 받아주기
+    struct OneOrMany<T: Decodable>: Decodable {
+        let values: [T]
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if let arr = try? c.decode([T].self) {
+                values = arr
+            } else if let obj = try? c.decode(T.self) {
+                values = [obj]
+            } else {
+                values = []
+            }
+        }
+    }
+    struct ATTripEntity: Decodable {
+        struct TripUpdate: Decodable {
+            struct Trip: Decodable {
+                let trip_id: String?
+                let start_time: String?
+                let start_date: String?
+                let route_id: String?
+                let direction_id: Int?
+            }
+            struct When: Decodable {
+                let delay: Int?
+                let time: Int64?
+                let uncertainty: Int?
+            }
+            struct STU: Decodable {
+                let stop_sequence: Int?
+                let stop_id: String?
+                let arrival: When?
+                let departure: When?
+                let schedule_relationship: Int?
+            }
+            let trip: Trip?
+            let stop_time_update: OneOrMany<STU>   // 👈 여기!
+            let vehicle: Vehicle?
+            let timestamp: Int64?
+            let delay: Int?
+            struct Vehicle: Decodable {
+                let id: String?
+                let label: String?
+                let license_plate: String?
+            }
+        }
+
+        let id: String?
+        let trip_update: TripUpdate?
+        let is_deleted: Bool?
+    }
+
+
+
+    // 레거시 엔벨로프(루트가 {response:{entity:[...]}} 또는 {entity:[...]} 모두 대응)
+    private struct ATEnvelope<E: Decodable>: Decodable {
+        let entity: [E]
+        private struct Resp: Decodable { let entity: [E]? }
+        enum CodingKeys: String, CodingKey { case response, entity }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            if let resp = try? c.decode(Resp.self, forKey: .response) {
+                entity = resp.entity ?? []
+            } else if let arr = try? c.decode([E].self, forKey: .entity) {
+                entity = arr
+            } else {
+                entity = []
+            }
+        }
+    }
+
+    // TripUpdates 스키마(레거시 JSON)
+   
     private let serviceKeyRaw = "FVUZJTrP1WLAsFAKcXy8lh2Qy1DWNw5Ul2+vSY01E3cUJlO/9P+CodODXPIyzppQCPswXvc1WeblEAh6X41ClA=="
 
     private lazy var session: URLSession = {
@@ -487,7 +627,7 @@ final class BusAPI: NSObject, URLSessionDelegate {
         for res in list.data {
             let a = res.attributes
             guard let lat = a.stop_lat, let lon = a.stop_lon else { continue }
-            all.append(BusStop(id: res.id, name: a.stop_name ?? "Stop \(res.id)", lat: lat, lon: lon, cityCode: 0))
+            all.append(BusStop(id: res.id, name: a.stop_name ?? "Stop \(res.id)", lat: lat, lon: lon, cityCode: CITY_AUCKLAND))
         }
 
         // 기존처럼 근처(예: 500m)만 추리려면 여기서 거리필터
@@ -598,128 +738,143 @@ final class BusAPI: NSObject, URLSessionDelegate {
             print("AT KEY LEN=\(k.count), PREFIX=\(k.prefix(6))")
         }
     }
-
-    // GTFS-RT Trip Updates → 특정 정류장 ETA 리스트
-    // ✅ TripUpdates: v3 → v2/public/realtime/tripUpdates 폴백
-    // MARK: - Arrivals (Auckland / legacy tripupdates)
-    // MARK: - Arrivals (Auckland / legacy tripupdates) — stop_time_update 배열/단일 모두 허용
-    func fetchArrivalsDetailed(cityCode: Int, nodeId: String) async throws -> [ArrivalInfo] {
-        // ---- helpers (이 메서드 안에서만 사용) ----
-        func normalizeStopId(_ s: String) -> String {
-            var x = s
-            if x.hasPrefix("AT:") { x.removeFirst(3) }
-            while x.first == "0", x.count > 1 { x.removeFirst() }
-            return x
-        }
-        func assertATKeyPresent() {
-            let k = ATAuth.subscriptionKey
-            if k.isEmpty || k == "ec5d760914084999abf5ade72b3e8f2d" {
-                print("❌ AT key is empty or placeholder")
-            } else {
-                print("AT KEY LEN=\(k.count), PREFIX=\(k.prefix(6))")
-            }
-        }
-        // 배열/단일 객체 모두 허용하는 간단한 디코더
-        struct FlexArray<T: Decodable>: Decodable {
-            let values: [T]
-            init(from decoder: Decoder) throws {
-                let c = try decoder.singleValueContainer()
-                if let arr = try? c.decode([T].self) { values = arr }
-                else if let one = try? c.decode(T.self) { values = [one] }
-                else { values = [] }
-            }
-        }
-        // -----------------------------------------
-
-        assertATKeyPresent()
+    // BusAPI.swift 등 공용 위치에 추가
+    private func atGET(_ path: String, query: [URLQueryItem] = []) async throws -> Data {
+        // 키 확인(디버그 로그 포함)
+        let key = ATAuth.subscriptionKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { throw URLError(.userAuthenticationRequired) }
+        debugPrint("AT KEY LEN=\(key.count), PREFIX=\(key.prefix(6))")
 
         var comp = URLComponents()
         comp.scheme = "https"
-        comp.host   = "api.at.govt.nz"
-        comp.path   = "/realtime/legacy/tripupdates"
+        comp.host = "api.at.govt.nz"
+        comp.path = path.hasPrefix("/") ? path : "/\(path)"
+        comp.queryItems = query.isEmpty ? nil : query
 
-        var req = URLRequest(url: comp.url!)
-        req.setValue(ATAuth.subscriptionKey, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
+        guard let url = comp.url else { throw URLError(.badURL) }
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 20)
+        req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(key, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
 
-        struct Root: Decodable { let response: Resp }
-        struct Resp: Decodable  { let entity: [Entity] }
-        struct Entity: Decodable {
-            let trip_update: TU?
-            struct TU: Decodable {
-                let trip: Trip?
-                let stop_time_update: [STU]?
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            debugPrint("❌ AT HTTP \(http.statusCode) — \(url.absoluteString)\n↳ HEADERS sent: \(req.allHTTPHeaderFields ?? [:])\n↳ BODY: \(body)")
+            throw URLError(.badServerResponse)
+        }
+        return data
+    }
 
-                struct Trip: Decodable { let route_id: String? }
+    // GTFS-RT Trip Updates → 특정 정류장 ETA 리스트
+    // ✅ TripUpdates: v3 → v2/public/realtime/tripUpdates 폴백
+    // MARK: - Arrivals (AT legacy tripupdates, with robust stop_id matching + rich logs)
+    func fetchArrivalsDetailed(cityCode: Int, nodeId: String) async throws -> [ArrivalInfo] {
+        struct SafeDecodable<T: Decodable>: Decodable { let value: T?
+            init(from d: Decoder) throws { let c = try d.singleValueContainer(); self.value = try? c.decode(T.self) } }
+
+        struct OneOrMany<T: Decodable>: Decodable { let values: [T]
+            init(from d: Decoder) throws {
+                let c = try d.singleValueContainer()
+                if let one = try? c.decode(T.self) { values = [one]; return }
+                values = (try? c.decode([T].self)) ?? []
+            } }
+
+        struct TripUpdatesEnvelope: Decodable {
+            struct Response: Decodable { let entity: [SafeDecodable<Entity>]? }
+            let response: Response?
+            let entity: [SafeDecodable<Entity>]?
+            var flattened: [Entity] {
+                if let r = response?.entity { return r.compactMap { $0.value } }
+                if let e = entity { return e.compactMap { $0.value } }
+                return []
+            }
+            struct Entity: Decodable {
+                let id: String?
+                let trip_update: TripUpdate?
+                let is_deleted: Bool?
+                struct TripUpdate: Decodable {
+                    let trip: Trip?
+                    let stop_time_update: OneOrMany<STU>?
+                    let vehicle: Vehicle?
+                    let timestamp: Int64?
+                    let delay: Int?
+                }
+                struct Trip: Decodable {
+                    let trip_id: String?
+                    let route_id: String?
+                }
                 struct STU: Decodable {
+                    struct T: Decodable { let delay: Int?; let time: Int64? }
+                    let stop_sequence: Int?
+                    let arrival: T?
+                    let departure: T?
                     let stop_id: String?
-                    let arrival: TimeInfo?
-                    struct TimeInfo: Decodable { let delay: Int?; let time: Int64? }
                 }
-
-                // 🔧 핵심: stop_time_update가 배열/단일 둘 다 오는 것을 허용
-                init(from decoder: Decoder) throws {
-                    let c = try decoder.container(keyedBy: CodingKeys.self)
-                    trip = try? c.decode(Trip.self, forKey: .trip)
-
-                    if let arr = try? c.decode([STU].self, forKey: .stop_time_update) {
-                        stop_time_update = arr
-                    } else if let one = try? c.decode(STU.self, forKey: .stop_time_update) {
-                        stop_time_update = [one]
-                    } else if let flex = try? c.decode(FlexArray<STU>.self, forKey: .stop_time_update) {
-                        stop_time_update = flex.values
-                    } else {
-                        stop_time_update = nil
-                    }
-                }
-
-                private enum CodingKeys: String, CodingKey {
-                    case trip, stop_time_update
-                }
+                struct Vehicle: Decodable { let id: String? }
             }
         }
 
-        let (data, raw) = try await URLSession.shared.data(for: req)
-        guard let http = raw as? HTTPURLResponse, (200..<300).contains(http.statusCode), !data.isEmpty else {
-            let code = (raw as? HTTPURLResponse)?.statusCode ?? -1
-            print("❌ AT HTTP \(code) — \(comp.url?.absoluteString ?? "")")
-            return []
+        func atGET(_ path: String) async throws -> Data {
+            var req = URLRequest(url: URL(string: "https://api.at.govt.nz\(path)")!)
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.setValue(ATAuth.subscriptionKey, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            print("📡 AT HTTP \(http.statusCode) — \(path)  bytes=\(data.count)")
+            return data
         }
 
-        let r = try JSONDecoder().decode(Root.self, from: data)
+        func stopIdCandidates(from nodeId: String) -> Set<String> {
+            var set = Set<String>()
+            set.insert(nodeId)
+            if let head = nodeId.split(separator: "-").first {
+                let h = String(head)
+                set.insert(h)
+                ["1","2","201","202","203"].forEach { set.insert("\(h)-\($0)") }
+            }
+            print("🔎 AT stop match candidates for nodeId=\(nodeId) → \(Array(set))")
+            return set
+        }
 
+        // -------- 실제 호출 --------
+        let data = try await atGET("/realtime/legacy/tripupdates")
+        let env = try JSONDecoder().decode(TripUpdatesEnvelope.self, from: data)
+        let entities = env.flattened
+        print("ℹ️ tripupdates entities=\(entities.count)")
+
+        // 디버그: 내가 찾는 nodeId의 헤드가 뭔지 먼저 찍기
+        let nodeHead = atStopHeadDigits(nodeId)
+        print("🧭 nodeDigits=\(nodeHead) nodeHead=\(nodeHead)")
         let now = Int64(Date().timeIntervalSince1970)
-        let nodeNorm = normalizeStopId(nodeId)
         var out: [ArrivalInfo] = []
 
-        for e in r.response.entity {
-            guard let tu = e.trip_update, let rid = tu.trip?.route_id else { continue }
-            for u in tu.stop_time_update ?? [] {
-                guard let sidRaw = u.stop_id, normalizeStopId(sidRaw) == nodeNorm else { continue }
+        for e in entities {
+            guard let tu = e.trip_update else { continue }
+            let rid = tu.trip?.route_id ?? "?"
+            for u in tu.stop_time_update?.values ?? [] {
+                let sid = u.stop_id ?? "nil"
+                // 디버그: 내가 찾는 nodeId의 헤드가 뭔지 먼저 찍기
+                let nodeHead = atStopHeadDigits(nodeId)
+                print("🧭 nodeDigits=\(nodeHead) nodeHead=\(nodeHead)")
 
-                // ETA: arrival.time(초) 우선, 없으면 delay(초)
                 let etaSec: Int = {
                     if let t = u.arrival?.time { return max(0, Int(t - now)) }
+                    if let t = u.departure?.time { return max(0, Int(t - now)) }
                     if let d = u.arrival?.delay { return max(0, d) }
+                    if let d = u.departure?.delay { return max(0, d) }
                     return 0
                 }()
-                let etaMin = max(0, Int((Double(etaSec)/60.0).rounded(.toNearestOrEven)))
-
-                out.append(ArrivalInfo(routeId: rid, routeNo: rid, etaMinutes: etaMin, destination: nil))
+                let etaMin = max(0, etaSec / 60)
+                let routeNo = rid.split(separator: "-").first.map(String.init) ?? rid
+                out.append(ArrivalInfo(routeId: rid, routeNo: routeNo, etaMinutes: etaMin, destination: nil))
             }
         }
 
-        // 같은 노선의 최소 ETA만 남기기
-        var best: [String: ArrivalInfo] = [:]
-        for a in out {
-            if let cur = best[a.routeId] {
-                if a.etaMinutes < cur.etaMinutes { best[a.routeId] = a }
-            } else {
-                best[a.routeId] = a
-            }
-        }
-        return Array(best.values).sorted { $0.etaMinutes < $1.etaMinutes }
+        print("ℹ️ arrivals total=\(out.count) uniques(routeId)=\(Set(out.map{$0.routeId}).count)")
+        return out.sorted { $0.etaMinutes < $1.etaMinutes }
     }
+
 
 
 
@@ -727,58 +882,127 @@ final class BusAPI: NSObject, URLSessionDelegate {
     
     // GTFS-RT Vehicle Positions → 노선별 버스 위치
     // 기존 함수를 전부 교체
-    // MARK: - Vehicle locations (Auckland / legacy vehiclelocations)
-
+    /// AT vehicle locations → BusLive 변환 (디버그 로그 버전)
+    /// - Parameters:
+    ///   - cityCode: (미사용) 시/지역 코드. 유지만.
+    ///   - routeId: 필터할 노선 ID. "25B-202" 전체 또는 "25B" 앞부분만 넣어도 됨. 빈 문자열이면 전체 반환.
+    /// - Returns: 지도에 찍을 실시간 차량들
     func fetchBusLocations(cityCode: Int, routeId: String) async throws -> [BusLive] {
-        assertATKeyPresent()
 
-        var comp = URLComponents()
-        comp.scheme = "https"
-        comp.host   = "api.at.govt.nz"
-        comp.path   = "/realtime/legacy/vehiclelocations"
-        // (문서상 tripid/vehicleid 쿼리는 선택. 전체 받아서 필터링하는 게 가장 단순/안정)
+        // MARK: - Helpers (local)
+        func atGET(_ path: String) async throws -> Data {
+            var req = URLRequest(url: URL(string: "https://api.at.govt.nz\(path)")!)
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.setValue(ATAuth.subscriptionKey, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            print("📡 AT HTTP \(http.statusCode) — \(path) bytes=\(data.count)")
+            return data
+        }
 
-        var req = URLRequest(url: comp.url!)
-        req.setValue(ATAuth.subscriptionKey, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        struct Root: Decodable { let response: Resp }
-        struct Resp: Decodable  { let entity: [Entity] }
-        struct Entity: Decodable {
-            let vehicle: VP?
-            struct VP: Decodable {
-                let position: Pos?
-                let trip: Trip?
-                let vehicle: Vehicle?
-                struct Pos: Decodable { let latitude: Double; let longitude: Double }
-                struct Trip: Decodable { let route_id: String? }
-                struct Vehicle: Decodable { let id: String? }
+        struct SafeDecodable<T: Decodable>: Decodable {
+            let value: T?
+            init(from d: Decoder) throws {
+                let c = try d.singleValueContainer()
+                self.value = try? c.decode(T.self)
             }
         }
 
-        let (data, raw) = try await URLSession.shared.data(for: req)
-        guard let http = raw as? HTTPURLResponse else { return [] }
-        guard (200..<300).contains(http.statusCode), !data.isEmpty else {
-            print("❌ AT HTTP \(http.statusCode) — \(comp.url?.absoluteString ?? "")")
-            return []
+        /// v1/legacy 응답이 두 형태(루트에 entity, response.entity)로 올 수 있어 방어적으로 flatten
+        struct Envelope: Decodable {
+            struct Resp: Decodable { let entity: [SafeDecodable<Entity>]? }
+            let response: Resp?
+            let entity: [SafeDecodable<Entity>]?
+            var flattened: [Entity] {
+                if let r = response?.entity { return r.compactMap { $0.value } }
+                if let e = entity { return e.compactMap { $0.value } }
+                return []
+            }
+
+            struct Entity: Decodable {
+                let id: String?
+                let vehicle: VehiclePayload?
+
+                struct VehiclePayload: Decodable {
+                    let trip: Trip?
+                    let position: Position?
+                    let vehicle: Vehicle?
+                    let timestamp: Int64?
+                }
+                struct Trip: Decodable { let route_id: String? }
+                struct Position: Decodable { let latitude: Double?; let longitude: Double? }
+                struct Vehicle: Decodable { let id: String?; let label: String? }
+            }
         }
 
-        let r = try JSONDecoder().decode(Root.self, from: data)
-
-        // 전체 → (선택) routeId로 필터
-        let all = r.response.entity.compactMap { e -> BusLive? in
-            guard let v = e.vehicle,
-                  let pos = v.position,
-                  let vehId = v.vehicle?.id else { return nil }
-            let rno = v.trip?.route_id ?? "?"
-            return BusLive(id: vehId, routeNo: rno,
-                           lat: pos.latitude, lon: pos.longitude,
-                           etaMinutes: nil, nextStopName: nil)
+        // 노선 아이디 정규화: "25B-202" → prefix "25B", full "25B-202"
+        func normalizeRouteId(_ rid: String?) -> (prefix: String, full: String) {
+            let full = rid ?? "?"
+            let prefix = full.split(separator: "-").first.map(String.init) ?? full
+            return (prefix, full)
         }
 
-        if routeId.isEmpty { return all }
-        // routeId가 주어졌다면 해당 route만
-        return all.filter { $0.routeNo == routeId }
+        // 입력 필터 정규화 (사용자가 "25B-202" 또는 "25B"를 넣어도 매칭되게)
+        let filterFull = routeId
+        let filterPrefix = routeId.split(separator: "-").first.map(String.init) ?? routeId
+        let useFilter = !routeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        // MARK: - Fetch & Decode
+        let data = try await atGET("/realtime/legacy/vehiclelocations")
+        let env = try JSONDecoder().decode(Envelope.self, from: data)
+        let entities = env.flattened
+        print("🚌 vehiclelocations entities=\(entities.count)")
+
+        // 샘플 5개만 찍어보기
+        for (idx, e) in entities.prefix(5).enumerated() {
+            let rid = e.vehicle?.trip?.route_id ?? "nil"
+            let lat = e.vehicle?.position?.latitude ?? .nan
+            let lon = e.vehicle?.position?.longitude ?? .nan
+            print("   └ sample[\(idx)] id=\(e.id ?? "?") route_id=\(rid) pos=\(lat),\(lon)")
+        }
+
+        // MARK: - Transform → BusLive
+        var result: [BusLive] = []
+        var seenNoPos = 0, seenNoVeh = 0, seenFilteredOut = 0
+
+        for e in entities {
+            guard let v = e.vehicle else { seenNoVeh += 1; continue }
+            guard
+                let lat = v.position?.latitude,
+                let lon = v.position?.longitude
+            else { seenNoPos += 1; continue }
+
+            let ridFull = v.trip?.route_id ?? "?"
+            let (ridPrefix, ridFullNorm) = normalizeRouteId(ridFull)
+
+            let passFilter: Bool = {
+                guard useFilter else { return true }
+                // 둘 중 하나라도 맞으면 통과
+                return ridFullNorm.caseInsensitiveCompare(filterFull) == .orderedSame
+                || ridPrefix.caseInsensitiveCompare(filterPrefix) == .orderedSame
+            }()
+
+            if !passFilter { seenFilteredOut += 1; continue }
+
+            let id = v.vehicle?.id ?? e.id ?? UUID().uuidString
+            let routeNo = ridPrefix
+            result.append(
+                BusLive(
+                    id: id,
+                    routeNo: routeNo,
+                    lat: lat,
+                    lon: lon,
+                    etaMinutes: nil,
+                    nextStopName: nil
+                )
+            )
+
+            print("✅ match vehicle id=\(id) route=\(ridFullNorm) (\(routeNo)) pos=\(lat),\(lon)")
+        }
+
+        print("📊 vehiclelocations summary: kept=\(result.count)  filteredByRoute=\(seenFilteredOut)  noPos=\(seenNoPos)  noVeh=\(seenNoVeh)")
+
+        return result
     }
 
 
