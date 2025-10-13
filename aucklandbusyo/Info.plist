@@ -2,7 +2,28 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    
+    <key>NSAppTransportSecurity</key>
+    <dict>
+      <key>NSAllowsArbitraryLoads</key><true/>
+    </dict>
+    
+    
+    
 	<key>ATSubscriptionKey</key>
 	<string>4d0066cc1722483ea87041a6e8ab7a25</string>
+    
+    
+    <key>GADApplicationIdentifier</key>
+    <string>ca-app-pub-2190585582842197~5023274382</string>
+    
+    <!-- 위치 권한 문구 -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Allow location access to show nearby bus stops and live bus locations on the map.</string>
+
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>Allow location access at all times to keep nearby stops and arrival alerts up to date, even when the app is not open.</string>
+    
+    
 </dict>
 </plist>

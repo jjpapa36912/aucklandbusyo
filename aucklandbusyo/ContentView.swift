@@ -14,9 +14,8 @@ import MapKit
 import CoreLocation
 import Foundation
 import simd
-//import GoogleMobileAds
+import GoogleMobileAds
 
-import Foundation
 
 extension Notification.Name {
     static let stopAlertOpened = Notification.Name("stopAlertOpened")
@@ -1201,9 +1200,9 @@ final class BusAnnotation: NSObject, MKAnnotation {
 
     private static func makeSubtitle(eta: Int?, next: String?) -> String? {
         switch (eta, next) {
-        case let (.some(e), .some(n)): return "다음 \(n) · 약 \(e)분"
-        case let (.none, .some(n)):    return "다음 \(n)"
-        case let (.some(e), .none):    return "약 \(e)분"
+        case let (.some(e), .some(n)): return "next \(n) · about \(e)min"
+        case let (.none, .some(n)):    return "next \(n)"
+        case let (.some(e), .none):    return "next stop, about \(e)min"
         default:                       return nil
         }
     }
@@ -1317,11 +1316,11 @@ final class BusMarkerView: MKMarkerAnnotationView {
         guard let a = annotation as? BusAnnotation else { return }
         let text: String? = {
             if let next = a.nextStopName, let eta = a.etaMinutes {
-                return "다음 \(next) · \(eta)분"
+                return "next \(next) · \(eta)min"
             } else if let next = a.nextStopName {
-                return "다음 \(next)"
+                return "next \(next)"
             } else if let eta = a.etaMinutes {
-                return "약 \(eta)분"
+                return "next stop, about \(eta)min"
             } else {
                 return nil
             }
@@ -1534,11 +1533,11 @@ final class MapVM: ObservableObject {
 
     // 알람 본문에 넣을 ETA 요약 문자열 (스냅샷)
     func focusETACompactSummary(maxPerRoute: Int = 2) -> String {
-        guard !focusStopETAs.isEmpty else { return "ETA 정보 없음" }
+        guard !focusStopETAs.isEmpty else { return "No ETA available" }
         // routeNo별 상위 N개 ETA만
         let grouped = Dictionary(grouping: focusStopETAs, by: { $0.routeNo })
         let parts = grouped.keys.sorted().map { rno in
-            let mins = (grouped[rno] ?? []).prefix(maxPerRoute).map { "\($0.etaMinutes)분" }.joined(separator: ",")
+            let mins = (grouped[rno] ?? []).prefix(maxPerRoute).map { "\($0.etaMinutes)min" }.joined(separator: ",")
             return "\(rno): \(mins)"
         }
         return parts.joined(separator: " • ")
@@ -1629,8 +1628,8 @@ final class MapVM: ObservableObject {
         }
 
     // MapVM 안 (기존 메서드 교체)
-    @MainActor
     // MapVM.swift
+    @MainActor
     func refreshFocusStopETA() async {
         guard let s = focusStop else { return }
         focusStopLoading = true
@@ -1640,8 +1639,11 @@ final class MapVM: ObservableObject {
         case .motie, .daejeon:
             do {
                 let arr = try await api.fetchArrivalsDetailed(cityCode: CITY_CODE, nodeId: s.id)
-                print("🇰🇷 [FocusETA] MOTIE loaded: stopId=\(s.id) name=\(s.name) count=\(arr.count)")
-                self.focusStopETAs = arr
+                // 🔽 추가: 0~60분만, 오름차순 정렬
+                let filtered = arr.filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 60 }
+                                  .sorted { $0.etaMinutes < $1.etaMinutes }
+                print("🇰🇷 [FocusETA] MOTIE loaded: stopId=\(s.id) name=\(s.name) count=\(filtered.count)")
+                self.focusStopETAs = filtered
             } catch {
                 print("❌ [FocusETA] MOTIE error: \(error)")
                 self.focusStopETAs = []
@@ -1650,8 +1652,11 @@ final class MapVM: ObservableObject {
         case .auckland:
             do {
                 let arr = try await api.fetchATArrivals(forStopId: s.id)
-                print("🇳🇿 [FocusETA] AT set: stopId=\(s.id) name=\(s.name) count=\(arr.count)")
-                self.focusStopETAs = arr
+                // 🔽 추가: 0~60분만, 오름차순 정렬
+                let filtered = arr.filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 60 }
+                                  .sorted { $0.etaMinutes < $1.etaMinutes }
+                print("🇳🇿 [FocusETA] AT set: stopId=\(s.id) name=\(s.name) count=\(filtered.count)")
+                self.focusStopETAs = filtered
             } catch {
                 print("❌ [FocusETA] AT error: \(error)")
                 self.focusStopETAs = []
@@ -1660,12 +1665,16 @@ final class MapVM: ObservableObject {
     }
 
 
+
         // 알림 본문 요약
-        func focusETACompactSummary() -> String {
-            guard !focusStopETAs.isEmpty else { return "도착 정보 없음" }
-            let parts = focusStopETAs.prefix(5).map { "\($0.routeNo) \($0.etaMinutes)분" }
-            return parts.joined(separator: " · ")
-        }
+    // 알림 본문 요약
+    func focusETACompactSummary() -> String {
+        let filtered = focusStopETAs.filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 60 }
+        guard !filtered.isEmpty else { return "No arrival information" }
+        let parts = filtered.prefix(5).map { "\($0.routeNo) \($0.etaMinutes)min" }
+        return parts.joined(separator: " · ")
+    }
+
     // 현재 좌표와 (가능하면) 추정 진행방향으로 임시 빨간선(직선) 그리기
     func setTemporaryFutureRouteFromBus(busId: String, coordinate: CLLocationCoordinate2D, meters: Double = 1200) {
         // tracks는 MapVM 내부에 private이지만, 여기선 접근 가능
@@ -2519,60 +2528,6 @@ final class MapVM: ObservableObject {
     }
 
 
-
-    // MapVM 안의 ensureRouteMeta(routeId:) 를 아래처럼 일부 보완
-    /// 노선 메타 확보: 경로(shape) + 정류장(stopS) 계산
-//    @MainActor
-//    func ensureRouteMeta(routeId: String, routeNo: String) async {
-//        // numeric 우선, 없으면 DJB 그대로
-//        let effectiveId = numericRouteIdByRouteNo[routeNo] ?? routeId
-//
-//        // 이미 있으면 스킵
-//        if routeMetaById[effectiveId] != nil { return }
-//
-//        do {
-//            // 정류장 목록
-//            let stops = try await api.fetchStopsByRoute(cityCode: CITY_CODE, routeId: effectiveId)
-//
-//            // 노선 경로 (shape)
-//            var shape = try await api.fetchRoutePath(cityCode: CITY_CODE, routeId: effectiveId)
-//
-//            // shape이 너무 짧으면 정류장 좌표 fallback
-//            if shape.count < 2, stops.count >= 2 {
-//                print("⚠️ ensureRouteMeta: fallback to stops for \(effectiveId)")
-//                shape = stops.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-//            }
-//
-//            // 누적 거리 배열 계산
-//            let cumul = buildCumul(shape)
-//            guard cumul.count == shape.count else {
-//                print("⚠️ ensureRouteMeta: cumul mismatch for \(effectiveId)")
-//                return
-//            }
-//
-//            // 정류장 → shape상 좌표 매핑
-//            let stopS: [Double] = stops.compactMap { s in
-//                projectOnRoute(CLLocationCoordinate2D(latitude: s.lat, longitude: s.lon),
-//                               shape: shape, cumul: cumul)?.s
-//            }
-//
-//            guard !stopS.isEmpty else {
-//                print("⚠️ ensureRouteMeta: no stopS for \(effectiveId)")
-//                return
-//            }
-//
-//            // 캐싱
-//            let meta = RouteMeta(shape: shape, cumul: cumul, stopS: stopS, stops: stops)
-//            routeMetaById[effectiveId] = meta
-//            print("✅ ensureRouteMeta: stored meta for \(effectiveId), shape=\(shape.count), stops=\(stops.count)")
-//        } catch {
-//            print("❌ ensureRouteMeta(\(effectiveId)) error: \(error)")
-//        }
-//    }
-
-    // MapVM 안, private helpers 섹션
-   
-
     
     // routeNo -> routeId 해석
     private func resolveRouteId(for routeNo: String) -> String? {
@@ -2595,20 +2550,6 @@ final class MapVM: ObservableObject {
     }
 
     
-    // MapVM 안에 추가: 노선 정류장 배열 기반으로 다음 정류장 추정
-    /// 노선 정류장 배열 기반으로 "다음 정류장"을 엄격하게 계산.
-    /// - 규칙:
-    ///   1) 초기화: 가장 가까운 정류장 기준으로 진행방향을 보아 next 후보를 정함
-    ///   2) 유지: 현재 next(J) 앞의 "게이트"(J를 지나는 수직선) 통과 전에는 J를 계속 유지
-    ///   3) 통과: 버스가 J를 지나 다음 정류장 방향으로 proj >= passMargin 이면 J+1로 전환
-    /// 경로 진행거리 s(미터)로 엄격하게 다음 정류장 결정.
-    /// - gatePassMargin: J의 s를 기준으로 그 앞(+방향)으로 최소 몇 m 지나야 J+1로 전환할지
-    /// 경로 진행거리 s(미터) 기반 "다음 정류장" (엄격 게이트 + 히스테리시스)
-    /// - 규칙
-    ///   • 절대 건너뛰기 금지(한 번에 +1만 가능)
-    ///   • J 정류장 게이트(s[J] + margin)를 "연속 N회" 넘어서야 J+1 전환
-    ///   • J에 근접(holdRadius)이면 무조건 J 유지
-    ///   • s가 잠깐 앞섰다 다시 뒤로 가는 노이즈도 무시(진행 증가량 minAdvance 필요)
     private func nextStopFromRoute(
         busId: String,
         progressS s: Double,
@@ -3030,20 +2971,20 @@ final class MapVM: ObservableObject {
                 }
                 while let arr = try await group.next() { allArrivals.append(contentsOf: arr) }
             }
-            print("ℹ️ arrivals=\(allArrivals.count)")
+//            print("ℹ️ arrivals=\(allArrivals.count)")
             let top = computeTopArrivals(allArrivals: allArrivals,
                                          followedRouteNo: (followBusId.flatMap { routeNoById[$0] }))
-            print("ℹ️ top after filter=\(top.count) → \(top.map{$0.routeNo}.prefix(6))")
-
-            // ✅ 국토부 routeId만 필터링해서 상위 노선 선택
-           
-            print("ℹ️ arrivals=\(allArrivals.count)")
-            
-            print("ℹ️ top after filter=\(top.count) → \(top.map{$0.routeNo}.prefix(6))")
-
-            print("ℹ️ arrivals=\(allArrivals.count)")
-            print("ℹ️ numeric arrivals=\(allArrivals.filter { isMotieRouteId($0.routeId) }.count)")
-            print("ℹ️ top after filter=\(top.count)")
+//            print("ℹ️ top after filter=\(top.count) → \(top.map{$0.routeNo}.prefix(6))")
+//
+//            // ✅ 국토부 routeId만 필터링해서 상위 노선 선택
+//           
+//            print("ℹ️ arrivals=\(allArrivals.count)")
+//            
+//            print("ℹ️ top after filter=\(top.count) → \(top.map{$0.routeNo}.prefix(6))")
+//
+//            print("ℹ️ arrivals=\(allArrivals.count)")
+//            print("ℹ️ numeric arrivals=\(allArrivals.filter { isMotieRouteId($0.routeId) }.count)")
+//            print("ℹ️ top after filter=\(top.count)")
 
             applyIfCurrent(epoch: epoch) { self.latestTopArrivals = top }
             guard !top.isEmpty else {
@@ -3524,7 +3465,7 @@ final class MapVM: ObservableObject {
         }
 
         var top = Array(bestByRoute.values)
-        print("ℹ️ after per-route minETA: \(top.count) routes, numeric-mapped routeNo=\(numericMapped)")
+//        print("ℹ️ after per-route minETA: \(top.count) routes, numeric-mapped routeNo=\(numericMapped)")
 
         if let fr = followedRouteNo {
             top.sort { lhs, rhs in
@@ -3532,12 +3473,12 @@ final class MapVM: ObservableObject {
                 if rhs.routeNo == fr { return false }
                 return lhs.etaMinutes < rhs.etaMinutes
             }
-            print("ℹ️ sorted with followedRouteNo=\(fr)")
+//            print("ℹ️ sorted with followedRouteNo=\(fr)")
         } else {
             top.sort { $0.etaMinutes < $1.etaMinutes }
         }
 
-        print("ℹ️ top sample: \(top.prefix(3).map{ "\($0.routeNo)=\($0.routeId) (\($0.etaMinutes)m)" })")
+//        print("ℹ️ top sample: \(top.prefix(3).map{ "\($0.routeNo)=\($0.routeId) (\($0.etaMinutes)m)" })")
         return top
     }
 
@@ -4030,21 +3971,7 @@ struct ClusteredMapView: UIViewRepresentable {
                 // === ✅ 왼쪽 액세서리: 아이콘 + 접근성 라벨 ===
                 let left = UIButton(type: .system)
                 let selected = parent.vm.isStopSelected(s.stop.id)
-//                left.setImage(UIImage(systemName: selected ? "checkmark.circle.fill" : "circle"), for: .normal)
-//                left.accessibilityLabel = selected ? "선택해제" : "선택"
-//                left.tintColor = .label
-//                left.contentEdgeInsets = UIEdgeInsets(top: 6, left: 6, bottom: 6, right: 6)
-//                left.sizeToFit()                               // ✅ 크기 확보
-//                v.leftCalloutAccessoryView = left
-//
-//                // === ✅ 오른쪽 액세서리: 종 아이콘(텍스트보다 안전) ===
-//                let right = UIButton(type: .system)
-//                right.setImage(UIImage(systemName: "bell.badge.fill"), for: .normal)
-//                right.accessibilityLabel = "알람"
-//                right.tintColor = .label
-//                right.contentEdgeInsets = UIEdgeInsets(top: 6, left: 6, bottom: 6, right: 6)
-//                right.sizeToFit()                              // ✅ 크기 확보
-//                v.rightCalloutAccessoryView = right
+
 
                 // 색상: 하이라이트(노랑) > 내가 고정한 정류장(주황) > 일반(빨강)
                 // ClusteredMapView.Coord - viewFor annotation 정류소 분기 내 색상 로직 교체
@@ -4069,7 +3996,7 @@ struct ClusteredMapView: UIViewRepresentable {
                 v.layer.zPosition = 100
                 v.canShowCallout = true
                 let btn = UIButton(type: .system)
-                btn.setTitle(isFollowed ? "해제" : "추적", for: .normal)
+                btn.setTitle(isFollowed ? "unlink" : "trace", for: .normal)
                 btn.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
                 v.rightCalloutAccessoryView = btn
                 v.updateAlwaysOnBubble()
@@ -4208,7 +4135,7 @@ struct ClusteredMapView: UIViewRepresentable {
                     if let mv = view as? BusMarkerView { mv.configureTint(isFollowed: false) }
                     if let mv = view as? BusMarkerView,
                        let btn = mv.rightCalloutAccessoryView as? UIButton {
-                        btn.setTitle("추적", for: .normal)
+                        btn.setTitle("trace", for: .normal)
                     }
                     parent.vm.stopTrail()
                     parent.vm.clearFutureRoute()
@@ -4226,7 +4153,7 @@ struct ClusteredMapView: UIViewRepresentable {
                     }
                     if let mv = view as? BusMarkerView,
                        let btn = mv.rightCalloutAccessoryView as? UIButton {
-                        btn.setTitle("해제", for: .normal)
+                        btn.setTitle("unlink", for: .normal)
                     }
                     parent.vm.startTrail(for: bus.id, seed: bus.coordinate)
                     DispatchQueue.main.async { [weak self, weak mapView] in
@@ -4352,7 +4279,7 @@ struct BusMapScreen: View {
     @State private var showBanner = false     // 노출 여부
     @State private var debugText = ""
         @State private var bannerMounted = false
-//        @StateObject private var banner = BannerAdController()
+        @StateObject private var banner = BannerAdController()
     
     // ✅ 알람 시트 상태
        @State private var showAlarmSheet = false
@@ -4366,68 +4293,70 @@ struct BusMapScreen: View {
         @State private var pendingAlertCount: Int = 0
     
     var body: some View {
-            ZStack {
-                ClusteredMapView(
-                    vm: vm,
-                    recenterRequest: $recenterRequest,
-                    onAskAlarmForStop: { stop in
-                        Task {
-                            // 1) 패널 포커스 + ETA 최신화
-                            await MainActor.run { vm.setFocusStop(stop) }
-                            await vm.refreshFocusStopETA()
+        ZStack {
+            ClusteredMapView(
+                vm: vm,
+                recenterRequest: $recenterRequest,
+                onAskAlarmForStop: { stop in
+                    Task {
+                        // 1) 패널 포커스 + ETA 최신화
+                        await MainActor.run { vm.setFocusStop(stop) }
+                        await vm.refreshFocusStopETA()
 
-                            // 2) 권한 확인
-                            let ok = await LocalAlertCenter.shared.requestPermissionIfNeeded()
-                            guard ok else { return }
+                        // 2) 권한 확인
+                        let ok = await LocalAlertCenter.shared.requestPermissionIfNeeded()
+                        guard ok else { return }
 
-                            // 3) ETA 요약 (예: "101 3분 · 612 5분 · …")
-                            let summary = vm.focusStopETAs
-                                .sorted { $0.etaMinutes < $1.etaMinutes }
-                                .prefix(6)
-                                .map { "\($0.routeNo) \($0.etaMinutes)분" }
-                                .joined(separator: " · ")
+                        // 3) ✅ 60분 이내 ETA만 요약 (정렬 후 최대 6개)
+                        let summary = vm.focusStopETAs
+                            .filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 60 }
+                            .sorted { $0.etaMinutes < $1.etaMinutes }
+                            .prefix(6)
+                            .map { "\($0.routeNo) \($0.etaMinutes)min" }
+                            .joined(separator: " · ")
 
-                            // 4) 5분 뒤 단발 알림 예약 (본문에 ETA 요약 포함)
-                            let fire = Date().addingTimeInterval(5 * 60)
-                            LocalAlertCenter.shared.scheduleOneTime(
-                                stop: stop,
-                                routes: nil,
-                                at: fire,
-                                etaSummary: summary   // ← extraBody 아님!
-                            )
+                        // 4) 5분 뒤 단발 알림 예약 (본문에 ETA 요약 포함)
+                        let fire = Date().addingTimeInterval(5 * 60)
+                        LocalAlertCenter.shared.scheduleOneTime(
+                            stop: stop,
+                            routes: nil,
+                            at: fire,
+                            etaSummary: summary
+                        )
 
-                            // 5) 알람 표시(노란색) 유지
-                            vm.setAlarmed(true, stopId: stop.id)
+                        // 5) 알람 표시(노란색) 유지
+                        vm.setAlarmed(true, stopId: stop.id)
 
-                            // 6) 카운트 갱신
-                            pendingAlertCount = await LocalAlertCenter.shared.pendingCount()
-                        }
+                        // 6) 상단 카운트 갱신
+                        pendingAlertCount = await LocalAlertCenter.shared.pendingCount()
                     }
-                    // 선택 패널은 더이상 쓰지 않으면 파라미터 자체를 제거해도 됩니다.
-                    // , onToggleSelectStop: { stop in vm.toggleStopSelection(stop.id) }
-                )
-                .ignoresSafeArea()
-                .task {
-                    loc.requestWhenInUse()
-                    await vm.reload(center: .init(latitude: -36.8485, longitude: 174.7633))
                 }
-
-                // 내 위치 버튼
-                Button {
-                    loc.requestWhenInUse()
-                    recenterRequest = true
-                } label: {
-                    Image(systemName: "location.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .padding(14)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Circle())
-                        .shadow(radius: 3)
-                }
-                .padding(.top, 24)
-                .padding(.trailing, 16)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                // 선택 토글 사용 시 필요하다면 아래 주석 해제
+                // , onToggleSelectStop: { stop in vm.toggleStopSelection(stop.id) }
+            )
+            .ignoresSafeArea()
+            .task {
+                loc.requestWhenInUse()
+                await vm.reload(center: .init(latitude: -36.8485, longitude: 174.7633))
             }
+
+            // 내 위치 버튼 ...
+            Button {
+                loc.requestWhenInUse()
+                recenterRequest = true
+            } label: {
+                Image(systemName: "location.fill")
+                    .font(.system(size: 18, weight: .bold))
+                    .padding(14)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Circle())
+                    .shadow(radius: 3)
+            }
+            .padding(.top, 24)
+            .padding(.trailing, 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        }
+
 
             // 고정 “추적 중” 배지
             .overlay(alignment: .topLeading) {
@@ -4468,7 +4397,7 @@ struct BusMapScreen: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "bell.slash.fill")
-                        Text(pendingAlertCount > 0 ? "알람 끄기 (\(pendingAlertCount))" : "알람 끄기")
+                        Text(pendingAlertCount > 0 ? "Turn off alarm (\(pendingAlertCount))" : "Turn off alarm")
                             .font(.caption).bold()
                     }
                     .padding(.horizontal, 10)
@@ -4487,66 +4416,44 @@ struct BusMapScreen: View {
 
             // 상단 배너
             .safeAreaInset(edge: .top)  {
-                AdFitVerboseBannerView(
-                    clientId: "DAN-0pxnvDh8ytVm0EsZ",
-                    adUnitSize: "320x50",
-                    timeoutSec: 8,
-                    maxRetries: 2
-                ) { event in
-                    switch event {
-                    case .begin(let n):  debugText = "BEGIN \(n)"
-                    case .willLoad:      debugText = "WILL_LOAD"
-                    case .success(let ms):
-                        showBanner = true
-                        debugText = "SUCCESS \(ms)ms"
-                    case .fail(let err, let n):
-                        showBanner = false
-                        debugText = "FAIL(\(n)): \(err.localizedDescription)"
-                    case .timeout(let sec, let n):
-                        showBanner = false
-                        debugText = "TIMEOUT \(sec)s (attempt \(n))"
-                    case .retryScheduled(let after, let next):
-                        debugText = "RETRY in \(after)s → \(next)"
-                    case .disposed:
-                        debugText = "disposed"
-                    }
-                }
-                .frame(width: 320, height: 50)
-                .opacity(showBanner ? 1 : 0)
-                .allowsHitTesting(showBanner)
-                .padding(.bottom, 8)
-                .animation(.easeInOut(duration: 0.2), value: showBanner)
+                
+                BannerAdView(controller: banner)
+                    .frame(height: 50)              // 일반 배너 높이
+                    .frame(maxWidth: .infinity)
+                    .background(.ultraThinMaterial) // 구분감
+                    .shadow(radius: 1)
+
             }
 
             // 알람 설정 시트
             .sheet(isPresented: $showAlarmSheet) {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("정류장 알림").font(.title3).bold()
+                    Text("Stop notification").font(.title3).bold()
                     if let s = alarmTargetStop {
-                        Text("정류장: \(s.name)").font(.subheadline)
+                        Text("Stop: \(s.name)").font(.subheadline)
                     }
 
                     Group {
-                        Text("특정 시각에 한 번 울리기").font(.footnote).foregroundStyle(.secondary)
-                        DatePicker("시간", selection: $alarmDate, displayedComponents: [.hourAndMinute, .date])
+                        Text("Alert once at a set time").font(.footnote).foregroundStyle(.secondary)
+                        DatePicker("Time", selection: $alarmDate, displayedComponents: [.hourAndMinute, .date])
                     }
 
                     Divider()
 
                     Group {
-                        Text("반복 알림 (분 단위)").font(.footnote).foregroundStyle(.secondary)
+                        Text("Repeat alert (minutes)").font(.footnote).foregroundStyle(.secondary)
                         HStack {
-                            TextField("예: 10", text: $repeatMinutesText)
+                            TextField("ex: 10", text: $repeatMinutesText)
                                 .keyboardType(.numberPad)
                                 .textFieldStyle(.roundedBorder)
-                            Text("분마다")
+                            Text("Every minutes")
                         }
                     }
 
                     HStack {
-                        Button("닫기") { showAlarmSheet = false }
+                        Button("Close") { showAlarmSheet = false }
                         Spacer()
-                        Button("저장") {
+                        Button("Save") {
                             Task {
                                 guard let s = alarmTargetStop else { return }
                                 let ok = await LocalAlertCenter.shared.requestPermissionIfNeeded()
@@ -4651,25 +4558,26 @@ struct TrackingBadgeView: View {
         if let fid = vm.followBusId,
            let info = vm.buses.first(where: { $0.id == fid }) {
             HStack(spacing: 8) {
-                Text("🎯 추적 중").font(.caption).bold()
-                Text("\(info.routeNo) • \(info.nextStopName ?? "다음 정류장 미정")")
+                Text("🎯 Tracking").font(.caption).bold()
+                Text("\(info.routeNo) • \(info.nextStopName ?? "Next stop not decided")")
                     .font(.caption)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) { vm.followBusId = nil }
                 } label: {
-                    Text("해제").font(.caption2).bold()
+                    Text("Unlink").font(.caption2).bold()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
             }
+            .padding(.top, 40)   // 기존 0에서 40pt 내려옴
             .padding(.vertical, 6)
             .padding(.horizontal, 10)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .shadow(radius: 2)
             .transition(.move(edge: .top).combined(with: .opacity))
-            .accessibilityLabel("추적 중 배지")
+            .accessibilityLabel("Tracking badge")
         }
     }
 }
@@ -4761,7 +4669,7 @@ struct UpcomingStopsPanel: View {
                     // 메타/경로 로딩 중인 상태도 패널이 보이게
                     HStack(spacing: 8) {
                         ProgressView().scaleEffect(0.8)
-                        Text("경로 불러오는 중…")
+                        Text("Loading route…")
                             .font(.caption)
                     }
                     .padding(10)
@@ -4771,7 +4679,7 @@ struct UpcomingStopsPanel: View {
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 6) {
-                            Text("🧭 다음 정류장").font(.caption).bold()
+                            Text("🧭 Next Stop").font(.caption).bold()
                             Text("(\(items.count))").font(.caption2).foregroundStyle(.secondary)
                         }
                         ForEach(items) { it in
@@ -4781,7 +4689,7 @@ struct UpcomingStopsPanel: View {
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                                 Spacer(minLength: 8)
-                                Text("\(it.etaMin)분")
+                                Text("\(it.etaMin)min")
                                     .font(.caption).monospacedDigit()
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
@@ -4836,7 +4744,7 @@ private struct UpcomingPanelContent: View {
             HStack(spacing: 8) {
                 Text("🗺️ \(live.routeNo)")
                     .font(.caption).bold()
-                Text(live.nextStopName ?? "다음 정류장 추정중…")
+                Text(live.nextStopName ?? "Estimating next stop…")
                     .font(.caption)
                     .lineLimit(1)
             }
@@ -4846,12 +4754,12 @@ private struct UpcomingPanelContent: View {
                     Circle().frame(width: 6, height: 6)
                     Text(it.name).font(.caption).lineLimit(1)
                     Spacer(minLength: 8)
-                    Text("\(it.etaMin)분").font(.caption2).monospacedDigit()
+                    Text("\(it.etaMin)min").font(.caption2).monospacedDigit()
                 }
             }
 
             if items.isEmpty {
-                Text("경로 메타 없음 — 근처/방향 기반으로 추정중")
+                Text("No route metadata — Estimating based on proximity/direction…")
                     .font(.caption2).foregroundStyle(.secondary)
             }
         }
@@ -4907,7 +4815,7 @@ final class LocalAlertCenter: NSObject, UNUserNotificationCenterDelegate {
     // MARK: - Public API
     /// 단발 알람 (특정 시각) — ETA 요약 포함 가능
     func scheduleOneTime(stop: BusStop, routes: [String]?, at date: Date, etaSummary: String? = nil) {
-        let content = buildContent(stop: stop, routes: routes, bodyPrefix: "도착 알림", etaSummary: etaSummary)
+        let content = buildContent(stop: stop, routes: routes, bodyPrefix: "Arrival Alert", etaSummary: etaSummary)
         let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
         let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
         let id = "one-\(stop.id)-\(UUID().uuidString)"
@@ -4917,7 +4825,7 @@ final class LocalAlertCenter: NSObject, UNUserNotificationCenterDelegate {
 
     /// 반복 알람 (분 단위) — ETA 요약 포함 가능
     func scheduleRepeating(stop: BusStop, routes: [String]?, every minutes: Int, etaSummary: String? = nil) {
-        let content = buildContent(stop: stop, routes: routes, bodyPrefix: "주기적 알림", etaSummary: etaSummary)
+        let content = buildContent(stop: stop, routes: routes, bodyPrefix: "Regular alert", etaSummary: etaSummary)
         let interval = max(60, minutes * 60)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(interval), repeats: true)
         let id = "rep-\(stop.id)-\(minutes)m"
@@ -5002,7 +4910,7 @@ final class LocalAlertCenter: NSObject, UNUserNotificationCenterDelegate {
         let c = UNMutableNotificationContent()
         c.title = "🚌 \(stop.name)"
         var parts: [String] = [bodyPrefix]
-        if let rs = routes, !rs.isEmpty { parts.append("노선 \(rs.joined(separator: ", "))") }
+        if let rs = routes, !rs.isEmpty { parts.append("Route \(rs.joined(separator: ", "))") }
         if let s = etaSummary, !s.isEmpty { parts.append(s) }
         c.body = parts.joined(separator: " • ")
         c.sound = .default
@@ -5042,10 +4950,10 @@ struct StopETAInfoPanel: View {
                 if vm.focusStopLoading {
                     HStack(spacing: 6) {
                         ProgressView()
-                        Text("ETA 불러오는 중…").font(.caption)
+                        Text("Loading ETA…").font(.caption)
                     }
                 } else if vm.focusStopETAs.isEmpty {
-                    Text("도착 정보 없음")
+                    Text("No arrival information")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -5055,12 +4963,12 @@ struct StopETAInfoPanel: View {
                 HStack {
                     Button {
                         Task { await vm.refreshFocusStopETA() }
-                    } label: { Label("새로고침", systemImage: "arrow.clockwise") }
+                    } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                     
                     Spacer()
                     
                     Button { onTapAlarm() } label: {
-                        Label("알람", systemImage: "bell.badge.fill")
+                        Label("Alert", systemImage: "bell.badge.fill")
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -5077,35 +4985,26 @@ struct StopETAInfoPanel: View {
     
     
     // ✅ 에러 없이 컴파일 잘 되는 리스트 렌더링
+    // StopETAInfoPanel.etaList()
     @ViewBuilder
     private func etaList() -> some View {
-        let etas: [ArrivalInfo] = self.vm.focusStopETAs   // ✅ self.vm 사용
-        
+        let etas: [ArrivalInfo] = self.vm.focusStopETAs
+            .filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 60 }   // 🔽 방어적 필터
         VStack(alignment: .leading, spacing: 6) {
-            // ✅ id 명시해서 Binding 오버로드가 아니라 값 오버로드를 강제
             ForEach(etas, id: \.id) { a in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(a.routeNo)
-                        .bold()
-                        .frame(minWidth: 44, alignment: .leading)
-                    
-                    Text("\(a.etaMinutes)분")
-                        .font(.callout)
-                        .monospacedDigit()
-                    
+                    Text(a.routeNo).bold().frame(minWidth: 44, alignment: .leading)
+                    Text("\(a.etaMinutes)min").font(.callout).monospacedDigit()
                     Spacer(minLength: 8)
-                    
                     if let dest = a.destination, !dest.isEmpty {
-                        Text(dest)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                        Text(dest).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.tail)
                     }
                 }
             }
         }
     }
+
     
     
     

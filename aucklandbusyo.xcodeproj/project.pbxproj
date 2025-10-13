@@ -8,10 +8,14 @@
 
 /* Begin PBXBuildFile section */
 		0AA767CE2E95F3CA00E542E7 /* AdFitSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 0AA767CD2E95F3CA00E542E7 /* AdFitSDK */; };
+		4341FDD8EB6D0024381341FF /* Pods_aucklandbusyo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 421ECA78D460F27BD22414F6 /* Pods_aucklandbusyo.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		0AA767B82E95EA2600E542E7 /* aucklandbusyo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = aucklandbusyo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		421ECA78D460F27BD22414F6 /* Pods_aucklandbusyo.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_aucklandbusyo.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		4DD5EBC144EB7B5A7679F958 /* Pods-aucklandbusyo.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-aucklandbusyo.release.xcconfig"; path = "Target Support Files/Pods-aucklandbusyo/Pods-aucklandbusyo.release.xcconfig"; sourceTree = "<group>"; };
+		83AB45E9BD659F425E4D3B0E /* Pods-aucklandbusyo.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-aucklandbusyo.debug.xcconfig"; path = "Target Support Files/Pods-aucklandbusyo/Pods-aucklandbusyo.debug.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -41,6 +45,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0AA767CE2E95F3CA00E542E7 /* AdFitSDK in Frameworks */,
+				4341FDD8EB6D0024381341FF /* Pods_aucklandbusyo.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -52,6 +57,8 @@
 			children = (
 				0AA767BA2E95EA2600E542E7 /* aucklandbusyo */,
 				0AA767B92E95EA2600E542E7 /* Products */,
+				FF315C6F6F6E99C2D3669896 /* Pods */,
+				465850733D638D8BE980E357 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -63,6 +70,23 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		465850733D638D8BE980E357 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				421ECA78D460F27BD22414F6 /* Pods_aucklandbusyo.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		FF315C6F6F6E99C2D3669896 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				83AB45E9BD659F425E4D3B0E /* Pods-aucklandbusyo.debug.xcconfig */,
+				4DD5EBC144EB7B5A7679F958 /* Pods-aucklandbusyo.release.xcconfig */,
+			);
+			path = Pods;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -70,9 +94,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0AA767C32E95EA2800E542E7 /* Build configuration list for PBXNativeTarget "aucklandbusyo" */;
 			buildPhases = (
+				8C90A7CE8BBB691E1ACEACDE /* [CP] Check Pods Manifest.lock */,
 				0AA767B42E95EA2600E542E7 /* Sources */,
 				0AA767B52E95EA2600E542E7 /* Frameworks */,
 				0AA767B62E95EA2600E542E7 /* Resources */,
+				B8ECC78D5D9CC93566A0B4EF /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -136,6 +162,52 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		8C90A7CE8BBB691E1ACEACDE /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-aucklandbusyo-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		B8ECC78D5D9CC93566A0B4EF /* [CP] Copy Pods Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-aucklandbusyo/Pods-aucklandbusyo-resources-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			inputPaths = (
+			);
+			name = "[CP] Copy Pods Resources";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-aucklandbusyo/Pods-aucklandbusyo-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-aucklandbusyo/Pods-aucklandbusyo-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		0AA767B42E95EA2600E542E7 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -185,7 +257,7 @@
 				DEVELOPMENT_TEAM = 9KDUS59PR5;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -249,7 +321,7 @@
 				DEVELOPMENT_TEAM = 9KDUS59PR5;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -270,11 +342,12 @@
 		};
 		0AA767C42E95EA2800E542E7 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 83AB45E9BD659F425E4D3B0E /* Pods-aucklandbusyo.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 9KDUS59PR5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -288,7 +361,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jjpapa.aucklandbusyo;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -299,11 +372,12 @@
 		};
 		0AA767C52E95EA2800E542E7 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4DD5EBC144EB7B5A7679F958 /* Pods-aucklandbusyo.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 9KDUS59PR5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -317,7 +391,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jjpapa.aucklandbusyo;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
