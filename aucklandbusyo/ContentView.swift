@@ -1640,7 +1640,7 @@ final class MapVM: ObservableObject {
             do {
                 let arr = try await api.fetchArrivalsDetailed(cityCode: CITY_CODE, nodeId: s.id)
                 // 🔽 추가: 0~60분만, 오름차순 정렬
-                let filtered = arr.filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 60 }
+                let filtered = arr.filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 40 }
                                   .sorted { $0.etaMinutes < $1.etaMinutes }
                 print("🇰🇷 [FocusETA] MOTIE loaded: stopId=\(s.id) name=\(s.name) count=\(filtered.count)")
                 self.focusStopETAs = filtered
@@ -1669,7 +1669,7 @@ final class MapVM: ObservableObject {
         // 알림 본문 요약
     // 알림 본문 요약
     func focusETACompactSummary() -> String {
-        let filtered = focusStopETAs.filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 60 }
+        let filtered = focusStopETAs.filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 40 }
         guard !filtered.isEmpty else { return "No arrival information" }
         let parts = filtered.prefix(5).map { "\($0.routeNo) \($0.etaMinutes)min" }
         return parts.joined(separator: " · ")
@@ -4106,11 +4106,19 @@ struct ClusteredMapView: UIViewRepresentable {
             }
 
             // 2) 정류소 탭: 포커스 세팅 + ETA 로드
+            // 2) 정류소 탭: 포커스 세팅 + ETA 로드
             if let stop = view.annotation as? BusStopAnnotation {
-                Task { [weak self] in
-                    guard let self else { return }
-                    await MainActor.run { self.parent.vm.setFocusStop(stop.stop) }   // 패널 표시 트리거
-                    await self.parent.vm.refreshFocusStopETA()                        // ETA 채우기
+                Task { [weak self, weak mapView] in
+                    guard let self, let mapView else { return }
+
+                    // 패널 포커스 + ETA
+                    await MainActor.run { self.parent.vm.setFocusStop(stop.stop) }
+                    await self.parent.vm.refreshFocusStopETA()
+
+                    // ✅ 같은 정류소를 다시 눌러도 didSelect가 또 호출되도록 즉시 해제
+                    DispatchQueue.main.async {
+                        mapView.deselectAnnotation(stop, animated: false)
+                    }
                 }
                 return
             }
@@ -4309,7 +4317,7 @@ struct BusMapScreen: View {
 
                         // 3) ✅ 60분 이내 ETA만 요약 (정렬 후 최대 6개)
                         let summary = vm.focusStopETAs
-                            .filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 60 }
+                            .filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 40 }
                             .sorted { $0.etaMinutes < $1.etaMinutes }
                             .prefix(6)
                             .map { "\($0.routeNo) \($0.etaMinutes)min" }
@@ -4989,7 +4997,7 @@ struct StopETAInfoPanel: View {
     @ViewBuilder
     private func etaList() -> some View {
         let etas: [ArrivalInfo] = self.vm.focusStopETAs
-            .filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 60 }   // 🔽 방어적 필터
+            .filter { $0.etaMinutes >= 0 && $0.etaMinutes <= 40 }   // 🔽 방어적 필터
         VStack(alignment: .leading, spacing: 6) {
             ForEach(etas, id: \.id) { a in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
