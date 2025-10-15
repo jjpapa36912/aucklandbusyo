@@ -14,9 +14,9 @@
             filePath = "aucklandbusyo/ContentView.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "1047"
-            endingLineNumber = "1047"
-            landmarkName = "stopIdCandidates(from:)"
+            startingLineNumber = "1101"
+            endingLineNumber = "1101"
+            landmarkName = "atGET(_:)"
             landmarkType = "9">
          </BreakpointContent>
       </BreakpointProxy>
@@ -30,9 +30,9 @@
             filePath = "aucklandbusyo/ContentView.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "1044"
-            endingLineNumber = "1044"
-            landmarkName = "stopIdCandidates(from:)"
+            startingLineNumber = "1098"
+            endingLineNumber = "1098"
+            landmarkName = "atGET(_:)"
             landmarkType = "9">
          </BreakpointContent>
       </BreakpointProxy>
